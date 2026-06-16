@@ -7,8 +7,6 @@ async function main() {
   const prNumber = process.env.PR_NUMBER;
   const token = process.env.GITHUB_TOKEN;
 
-  console.log(`Reviewing PR #${prNumber}`);
-
   const response = await axios.get(
     `https://api.github.com/repos/${owner}/${repo}/pulls/${prNumber}/files`,
     {
@@ -21,12 +19,14 @@ async function main() {
 
   const files = response.data;
 
-  console.log("\nChanged Files:\n");
+  for (const file of files) {
 
-  files.forEach(file => {
-    console.log(file.filename);
-  });
+    console.log("\n=================================");
+    console.log("FILE:", file.filename);
+    console.log("=================================\n");
 
+    console.log(file.patch || "No patch available");
+  }
 }
 
 main().catch(console.error);
