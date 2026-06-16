@@ -1,6 +1,10 @@
 const { reviewDiff } = require("./gemini");
 const axios = require("axios");
-const { createPRComment } = require("./github");
+const {
+  createPRComment,
+  getPRComments,
+  updateComment
+} = require("./github");
 
 async function getFileContent(
   contentsUrl,
@@ -44,10 +48,11 @@ async function main() {
   const files = response.data;
 
   const ignoredFiles = [
-    "scripts/gemini.js",
-    "scripts/review-pr.js",
-    "scripts/github.js"
-  ];
+  "scripts/gemini.js",
+  "scripts/review-pr.js",
+  "scripts/github.js",
+  ".github/workflows/ai-pr-review.yml"
+];
 
   const reviewableFiles = files.filter(
     file => !ignoredFiles.includes(file.filename)
@@ -117,7 +122,8 @@ async function main() {
   }
 
   let commentBody =
-    "## 🤖 AI Review Summary\n\n";
+  "<!-- AI_PR_REVIEW_COMMENT -->\n\n" +
+  "## 🤖 AI Review Summary\n\n";
 
   let findingCount = 0;
 
@@ -168,6 +174,39 @@ async function main() {
   console.log("========================\n");
   console.log(commentBody);
 
+  const comments =
+  await getPRComments({
+    owner,
+    repo,
+    prNumber,
+    token
+  });
+
+const existingComment =
+  comments.find(
+    comment =>
+      comment.body &&
+      comment.body.includes(
+        "AI_PR_REVIEW_COMMENT"
+      )
+  );
+
+if (existingComment) {
+
+  await updateComment({
+    owner,
+    repo,
+    commentId: existingComment.id,
+    token,
+    body: commentBody
+  });
+
+  console.log(
+    "Updated existing AI review comment"
+  );
+
+} else {
+
   await createPRComment({
     owner,
     repo,
@@ -175,6 +214,11 @@ async function main() {
     token,
     body: commentBody
   });
+
+  console.log(
+    "Created new AI review comment"
+  );
+}
 }
 
 main().catch(console.error);
