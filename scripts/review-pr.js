@@ -186,8 +186,13 @@ const existingComment =
   comments.find(
     comment =>
       comment.body &&
-      comment.body.includes(
-        "AI_PR_REVIEW_COMMENT"
+      (
+        comment.body.includes(
+          "AI_PR_REVIEW_COMMENT"
+        ) ||
+        comment.body.includes(
+          "🤖 AI Review Summary"
+        )
       )
   );
 
