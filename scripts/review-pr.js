@@ -41,9 +41,17 @@ async function main() {
     }
   );
 
-  const files = response.data;
+    const files = response.data;
+    const ignoredFiles = [
+        "scripts/gemini.js",
+        "scripts/review-pr.js"
+    ];
 
-  for (const file of files) {
+    const reviewableFiles = files.filter(
+        file => !ignoredFiles.includes(file.filename)
+    );
+
+  for (const file of reviewableFiles) {
 
     console.log("\n=================================");
     console.log("FILE:", file.filename);
