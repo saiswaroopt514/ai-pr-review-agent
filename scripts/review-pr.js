@@ -1,11 +1,11 @@
 const { reviewDiff } = require("./gemini");
 const axios = require("axios");
+const { createPRComment } = require("./github");
 
 async function getFileContent(
   contentsUrl,
   token
 ) {
-
   const response = await axios.get(
     contentsUrl,
     {
@@ -41,15 +41,23 @@ async function main() {
     }
   );
 
-    const files = response.data;
-    const ignoredFiles = [
-        "scripts/gemini.js",
-        "scripts/review-pr.js"
-    ];
+  const files = response.data;
 
-    const reviewableFiles = files.filter(
-        file => !ignoredFiles.includes(file.filename)
-    );
+  const ignoredFiles = [
+    "scripts/gemini.js",
+    "scripts/review-pr.js",
+    "scripts/github.js"
+  ];
+
+  const reviewableFiles = files.filter(
+    file => !ignoredFiles.includes(file.filename)
+  );
+
+  const allFindings = [];
+
+  console.log(
+    `Reviewing ${reviewableFiles.length} files`
+  );
 
   for (const file of reviewableFiles) {
 
@@ -84,13 +92,10 @@ async function main() {
       const findings =
         JSON.parse(cleaned);
 
-      console.log(
-        JSON.stringify(
-          findings,
-          null,
-          2
-        )
-      );
+      allFindings.push({
+        fileName: file.filename,
+        findings
+      });
 
     } catch (err) {
 
@@ -101,6 +106,78 @@ async function main() {
       console.log(review);
     }
   }
+
+  if (allFindings.length === 0) {
+
+    console.log(
+      "No findings detected"
+    );
+
+    return;
+  }
+
+  let commentBody =
+    "## 🤖 AI Review Summary\n\n";
+
+  let findingCount = 0;
+
+  for (const fileResult of allFindings) {
+
+    const findings =
+      fileResult.findings.findings || [];
+
+    const filteredFindings =
+      findings.filter(
+        finding =>
+          (
+            finding.severity === "high" ||
+            finding.severity === "medium"
+          ) &&
+          (finding.confidence || 0) >= 0.85
+      );
+
+    if (!filteredFindings.length) {
+      continue;
+    }
+
+    commentBody +=
+      `### ${fileResult.fileName}\n`;
+
+    for (const finding of filteredFindings) {
+
+      findingCount++;
+
+      commentBody +=
+        `- **${finding.severity.toUpperCase()}**: ${finding.comment}\n`;
+    }
+
+    commentBody += "\n";
+  }
+
+  if (findingCount === 0) {
+
+    console.log(
+      "No actionable findings"
+    );
+
+    return;
+  }
+
+  console.log("\n========================");
+  console.log("GENERATED COMMENT");
+  console.log("========================\n");
+  console.log(commentBody);
+
+  // DON'T ENABLE THIS YET
+  /*
+  await createPRComment({
+    owner,
+    repo,
+    prNumber,
+    token,
+    body: commentBody
+  });
+  */
 }
 
 main().catch(console.error);
