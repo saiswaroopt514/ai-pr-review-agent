@@ -168,8 +168,6 @@ async function main() {
   console.log("========================\n");
   console.log(commentBody);
 
-  // DON'T ENABLE THIS YET
-  /*
   await createPRComment({
     owner,
     repo,
@@ -177,7 +175,6 @@ async function main() {
     token,
     body: commentBody
   });
-  */
 }
 
 main().catch(console.error);
