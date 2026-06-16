@@ -157,7 +157,7 @@ async function main() {
   `- Line ${finding.line} [${finding.severity.toUpperCase()}]\n` +
   `  ${finding.comment}\n`;
     }
-
+ 
     commentBody += "\n";
   }
 
