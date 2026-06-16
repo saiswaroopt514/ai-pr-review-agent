@@ -25,4 +25,4 @@ for (let i = 0; i < 2; i++) {
   console.log(`Batch ${i + 1} Total Revenue: $${batchRevenue}`);
 }
 
-console.timeEnd("Unoptimized Run");
+console.timeEnd("Unoptimized Run"); 
