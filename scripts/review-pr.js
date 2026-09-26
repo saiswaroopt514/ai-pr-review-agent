@@ -39,10 +39,12 @@ function getDependencyChangesFromPatch(patch) {
     return changes;
   }
 
+  const removed = [];
+  const added = [];
+
   const lines = patch.split("\n");
 
   for (const line of lines) {
-
     // Ignore diff metadata
     if (
       line.startsWith("+++") ||
@@ -51,8 +53,56 @@ function getDependencyChangesFromPatch(patch) {
       continue;
     }
 
-    // Dependency parsing will be implemented
-    // in the next step.
+    // Removed dependency
+    if (line.startsWith("-")) {
+      const match = line.match(
+        /^-\s*"([^"]+)"\s*:\s*"([^"]+)"/
+      );
+
+      if (match) {
+        removed.push({
+          name: match[1],
+          version: match[2]
+        });
+      }
+    }
+
+    // Added dependency
+    if (line.startsWith("+")) {
+      const match = line.match(
+        /^\+\s*"([^"]+)"\s*:\s*"([^"]+)"/
+      );
+
+      if (match) {
+        added.push({
+          name: match[1],
+          version: match[2]
+        });
+      }
+    }
+  }
+
+  // Match removed + added package names
+  // to identify version updates
+  for (const newDependency of added) {
+    const oldDependency =
+      removed.find(
+        dependency =>
+          dependency.name === newDependency.name
+      );
+
+    if (oldDependency) {
+      changes.updated.push({
+        name: newDependency.name,
+        from: oldDependency.version,
+        to: newDependency.version
+      });
+    } else {
+      changes.added.push({
+        name: newDependency.name,
+        version: newDependency.version
+      });
+    }
   }
 
   return changes;
