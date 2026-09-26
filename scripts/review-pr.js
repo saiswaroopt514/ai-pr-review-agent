@@ -76,6 +76,12 @@ async function main() {
   );
 
   const files = response.data;
+  console.log(
+    "\n📁 Files returned by GitHub:"
+  );
+  files.forEach(file => {
+    console.log(file.filename);
+  });
 
   // STEP 1: Check whether package.json was changed
   const packageJsonFile =
