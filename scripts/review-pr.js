@@ -28,6 +28,36 @@ async function getFileContent(
     .toString("utf8");
 }
 
+// STEP 1: Detect dependency changes from package.json patch
+function getDependencyChangesFromPatch(patch) {
+  const changes = {
+    added: [],
+    updated: []
+  };
+
+  if (!patch) {
+    return changes;
+  }
+
+  const lines = patch.split("\n");
+
+  for (const line of lines) {
+
+    // Ignore diff metadata
+    if (
+      line.startsWith("+++") ||
+      line.startsWith("---")
+    ) {
+      continue;
+    }
+
+    // Dependency parsing will be implemented
+    // in the next step.
+  }
+
+  return changes;
+}
+
 async function main() {
 
   const owner = process.env.REPO_OWNER;
@@ -47,12 +77,46 @@ async function main() {
 
   const files = response.data;
 
+  // STEP 1: Check whether package.json was changed
+  const packageJsonFile =
+    files.find(
+      file => file.filename === "package.json"
+    );
+
+  if (packageJsonFile) {
+
+    console.log(
+      "\n📦 package.json changed"
+    );
+
+    console.log(
+      packageJsonFile.patch
+    );
+
+    const dependencyChanges =
+      getDependencyChangesFromPatch(
+        packageJsonFile.patch
+      );
+
+    console.log(
+      "\n📦 Dependency Changes:"
+    );
+
+    console.log(
+      JSON.stringify(
+        dependencyChanges,
+        null,
+        2
+      )
+    );
+  }
+
   const ignoredFiles = [
-  "scripts/gemini.js",
-  "scripts/review-pr.js",
-  "scripts/github.js",
-  ".github/workflows/ai-pr-review.yml"
-];
+    "scripts/gemini.js",
+    "scripts/review-pr.js",
+    "scripts/github.js",
+    ".github/workflows/ai-pr-review.yml"
+  ];
 
   const reviewableFiles = files.filter(
     file => !ignoredFiles.includes(file.filename)
@@ -122,8 +186,8 @@ async function main() {
   }
 
   let commentBody =
-  "<!-- AI_PR_REVIEW_COMMENT -->\n\n" +
-  "## 🤖 AI Review Summary\n\n";
+    "<!-- AI_PR_REVIEW_COMMENT -->\n\n" +
+    "## 🤖 AI Review Summary\n\n";
 
   let findingCount = 0;
 
@@ -154,10 +218,10 @@ async function main() {
       findingCount++;
 
       commentBody +=
-  `- Line ${finding.line} [${finding.severity.toUpperCase()}]\n` +
-  `  ${finding.comment}\n`;
+        `- Line ${finding.line} [${finding.severity.toUpperCase()}]\n` +
+        `  ${finding.comment}\n`;
     }
- 
+
     commentBody += "\n";
   }
 
@@ -176,55 +240,55 @@ async function main() {
   console.log(commentBody);
 
   const comments =
-  await getPRComments({
-    owner,
-    repo,
-    prNumber,
-    token
-  });
+    await getPRComments({
+      owner,
+      repo,
+      prNumber,
+      token
+    });
 
-const existingComment =
-  comments.find(
-    comment =>
-      comment.body &&
-      (
-        comment.body.includes(
-          "AI_PR_REVIEW_COMMENT"
-        ) ||
-        comment.body.includes(
-          "🤖 AI Review Summary"
+  const existingComment =
+    comments.find(
+      comment =>
+        comment.body &&
+        (
+          comment.body.includes(
+            "AI_PR_REVIEW_COMMENT"
+          ) ||
+          comment.body.includes(
+            "🤖 AI Review Summary"
+          )
         )
-      )
-  );
+    );
 
-if (existingComment) {
+  if (existingComment) {
 
-  await updateComment({
-    owner,
-    repo,
-    commentId: existingComment.id,
-    token,
-    body: commentBody
-  });
+    await updateComment({
+      owner,
+      repo,
+      commentId: existingComment.id,
+      token,
+      body: commentBody
+    });
 
-  console.log(
-    "Updated existing AI review comment"
-  );
+    console.log(
+      "Updated existing AI review comment"
+    );
 
-} else {
+  } else {
 
-  await createPRComment({
-    owner,
-    repo,
-    prNumber,
-    token,
-    body: commentBody
-  });
+    await createPRComment({
+      owner,
+      repo,
+      prNumber,
+      token,
+      body: commentBody
+    });
 
-  console.log(
-    "Created new AI review comment"
-  );
-}
+    console.log(
+      "Created new AI review comment"
+    );
+  }
 }
 
 main().catch(console.error);
