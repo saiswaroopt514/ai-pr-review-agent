@@ -234,19 +234,27 @@ async function main() {
       of dependencyChanges.added
     ) {
 
+      // Convert version ranges such as ^1.18.1
+      // to the concrete version 1.18.1
+      const version =
+        dependency.version.replace(
+          /^[\^~>=<]+/,
+          ""
+        );
+
       console.log(
-        `\n🔐 Checking ${dependency.name}@${dependency.version}`
+        `\n🔐 Checking ${dependency.name}@${version}`
       );
 
       const vulnerabilities =
         await checkDependencyVulnerability(
           dependency.name,
-          dependency.version
+          version
         );
 
       securityFindings.push({
         name: dependency.name,
-        version: dependency.version,
+        version,
         vulnerabilities
       });
     }
@@ -257,20 +265,28 @@ async function main() {
       of dependencyChanges.updated
     ) {
 
+      // Convert version ranges such as ^1.18.1
+      // to the concrete version 1.18.1
+      const version =
+        dependency.to.replace(
+          /^[\^~>=<]+/,
+          ""
+        );
+
       console.log(
-        `\n🔐 Checking ${dependency.name}@${dependency.to}`
+        `\n🔐 Checking ${dependency.name}@${version}`
       );
 
       const vulnerabilities =
         await checkDependencyVulnerability(
           dependency.name,
-          dependency.to
+          version
         );
 
       securityFindings.push({
         name: dependency.name,
         from: dependency.from,
-        version: dependency.to,
+        version,
         vulnerabilities
       });
     }
@@ -399,13 +415,6 @@ async function main() {
   /*
    * Security Vulnerability Review
    */
-  const vulnerabilitiesFound =
-    securityFindings.some(
-      dependency =>
-        dependency.vulnerabilities &&
-        dependency.vulnerabilities.length > 0
-    );
-
   if (securityFindings.length > 0) {
 
     commentBody +=
@@ -429,8 +438,8 @@ async function main() {
       }
 
       commentBody +=
-        `🚨 **${vulnerabilities.length} known vulnerability` +
-        `${vulnerabilities.length > 1 ? "ies" : ""} detected.**\n\n`;
+        `🚨 **${vulnerabilities.length} known ` +
+        `vulnerabilit${vulnerabilities.length > 1 ? "ies" : "y"} detected.**\n\n`;
 
       for (const vulnerability of vulnerabilities) {
 
