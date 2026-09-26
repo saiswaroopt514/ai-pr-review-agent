@@ -159,6 +159,52 @@ async function checkDependencyVulnerability(
   }
 }
 
+// Create a concise security summary
+function getSecuritySummary(vulnerabilities) {
+
+  const severityCounts = {};
+
+  const fixedVersions = [];
+
+  for (const vulnerability of vulnerabilities) {
+
+    const severity =
+      vulnerability.database_specific?.severity ||
+      "UNKNOWN";
+
+    severityCounts[severity] =
+      (severityCounts[severity] || 0) + 1;
+
+    const fixes =
+      vulnerability.affected
+        ?.flatMap(
+          affected =>
+            affected.ranges
+              ?.flatMap(
+                range =>
+                  range.events
+                    ?.filter(
+                      event =>
+                        event.fixed
+                    )
+                    .map(
+                      event =>
+                        event.fixed
+                    ) || []
+              ) || []
+        ) || [];
+
+    fixedVersions.push(...fixes);
+  }
+
+  return {
+    severityCounts,
+    fixedVersions: [
+      ...new Set(fixedVersions)
+    ]
+  };
+}
+
 async function main() {
 
   const owner = process.env.REPO_OWNER;
@@ -234,8 +280,8 @@ async function main() {
       of dependencyChanges.added
     ) {
 
-      // Convert version ranges such as ^1.18.1
-      // to the concrete version 1.18.1
+      // Convert versions such as ^1.18.1
+      // to 1.18.1 before querying OSV
       const version =
         dependency.version.replace(
           /^[\^~>=<]+/,
@@ -265,8 +311,8 @@ async function main() {
       of dependencyChanges.updated
     ) {
 
-      // Convert version ranges such as ^1.18.1
-      // to the concrete version 1.18.1
+      // Convert versions such as ^1.18.1
+      // to 1.18.1 before querying OSV
       const version =
         dependency.to.replace(
           /^[\^~>=<]+/,
@@ -312,7 +358,10 @@ async function main() {
   ];
 
   const reviewableFiles = files.filter(
-    file => !ignoredFiles.includes(file.filename)
+    file =>
+      !ignoredFiles.includes(
+        file.filename
+      )
   );
 
   const allFindings = [];
@@ -323,9 +372,18 @@ async function main() {
 
   for (const file of reviewableFiles) {
 
-    console.log("\n=================================");
-    console.log("FILE:", file.filename);
-    console.log("=================================\n");
+    console.log(
+      "\n================================="
+    );
+
+    console.log(
+      "FILE:",
+      file.filename
+    );
+
+    console.log(
+      "=================================\n"
+    );
 
     if (!file.patch) {
       continue;
@@ -372,17 +430,27 @@ async function main() {
   /*
    * Build AI review comment
    */
+
   let commentBody =
     "<!-- AI_PR_REVIEW_COMMENT -->\n\n" +
     "## 🤖 AI Review Summary\n\n";
 
   let findingCount = 0;
 
-  for (const fileResult of allFindings) {
+  for (
+    const fileResult
+    of allFindings
+  ) {
 
     const findings =
       fileResult.findings.findings || [];
 
+    /*
+     * Keep the existing Gemini filtering:
+     *
+     * - HIGH or MEDIUM severity
+     * - Confidence >= 85%
+     */
     const filteredFindings =
       findings.filter(
         finding =>
@@ -400,12 +468,16 @@ async function main() {
     commentBody +=
       `### ${fileResult.fileName}\n`;
 
-    for (const finding of filteredFindings) {
+    for (
+      const finding
+      of filteredFindings
+    ) {
 
       findingCount++;
 
       commentBody +=
-        `- Line ${finding.line} [${finding.severity.toUpperCase()}]\n` +
+        `- Line ${finding.line} ` +
+        `[${finding.severity.toUpperCase()}]\n` +
         `  ${finding.comment}\n`;
     }
 
@@ -414,6 +486,8 @@ async function main() {
 
   /*
    * Security Vulnerability Review
+   *
+   * Keep this section intentionally concise.
    */
   if (securityFindings.length > 0) {
 
@@ -421,7 +495,10 @@ async function main() {
       "---\n\n" +
       "## 🔐 Security Vulnerability Review\n\n";
 
-    for (const dependency of securityFindings) {
+    for (
+      const dependency
+      of securityFindings
+    ) {
 
       const vulnerabilities =
         dependency.vulnerabilities || [];
@@ -429,6 +506,9 @@ async function main() {
       commentBody +=
         `### ${dependency.name}@${dependency.version}\n\n`;
 
+      /*
+       * No vulnerabilities
+       */
       if (vulnerabilities.length === 0) {
 
         commentBody +=
@@ -437,56 +517,62 @@ async function main() {
         continue;
       }
 
+      /*
+       * Vulnerabilities found
+       */
+      const {
+        severityCounts,
+        fixedVersions
+      } = getSecuritySummary(
+        vulnerabilities
+      );
+
+      const severityText =
+        Object.entries(
+          severityCounts
+        )
+          .map(
+            ([severity, count]) =>
+              `${severity}: ${count}`
+          )
+          .join(" • ");
+
       commentBody +=
         `🚨 **${vulnerabilities.length} known ` +
-        `vulnerabilit${vulnerabilities.length > 1 ? "ies" : "y"} detected.**\n\n`;
+        `vulnerabilities detected.**\n\n`;
 
-      for (const vulnerability of vulnerabilities) {
+      commentBody +=
+        `- ${severityText}\n`;
 
-        const severity =
-          vulnerability.database_specific?.severity ||
-          vulnerability.severity?.[0]?.score ||
-          "Unknown";
+      /*
+       * Show the available fixed versions.
+       *
+       * We currently display the highest
+       * reported fixed version.
+       */
+      if (fixedVersions.length > 0) {
 
-        const summary =
-          vulnerability.summary ||
-          "No vulnerability summary available.";
-
-        const fixedVersions =
-          vulnerability.database_specific
-            ?.last_affected ||
-          vulnerability.affected
-            ?.flatMap(
-              affected =>
-                affected.ranges
-                  ?.flatMap(
-                    range =>
-                      range.events
-                        ?.filter(
-                          event =>
-                            event.fixed
-                        )
-                        .map(
-                          event =>
-                            event.fixed
-                        ) || []
-                  ) || []
-            ) ||
-          [];
+        const recommendedVersion =
+          fixedVersions
+            .sort(
+              (a, b) =>
+                a.localeCompare(
+                  b,
+                  undefined,
+                  {
+                    numeric: true
+                  }
+                )
+            )
+            .pop();
 
         commentBody +=
-          `- **${vulnerability.id || "Unknown ID"}**\n` +
-          `  - Severity: **${severity}**\n` +
-          `  - ${summary}\n`;
-
-        if (fixedVersions.length > 0) {
-
-          commentBody +=
-            `  - Fixed version: **${fixedVersions[0]}**\n`;
-        }
-
-        commentBody += "\n";
+          `- **Fix:** Upgrade to ` +
+          `\`${dependency.name}@${recommendedVersion}\` ` +
+          `or later.\n`;
       }
+
+      commentBody += "\n";
     }
   }
 
@@ -505,12 +591,25 @@ async function main() {
     return;
   }
 
-  console.log("\n========================");
-  console.log("GENERATED COMMENT");
-  console.log("========================\n");
+  console.log(
+    "\n========================"
+  );
 
-  console.log(commentBody);
+  console.log(
+    "GENERATED COMMENT"
+  );
 
+  console.log(
+    "========================\n"
+  );
+
+  console.log(
+    commentBody
+  );
+
+  /*
+   * Find existing AI review comment
+   */
   const comments =
     await getPRComments({
       owner,
@@ -533,6 +632,9 @@ async function main() {
         )
     );
 
+  /*
+   * Update existing comment
+   */
   if (existingComment) {
 
     await updateComment({
@@ -547,6 +649,9 @@ async function main() {
       "Updated existing AI review comment"
     );
 
+  /*
+   * Create new comment
+   */
   } else {
 
     await createPRComment({
