@@ -48,11 +48,11 @@ async function main() {
   const files = response.data;
 
   const ignoredFiles = [
-  "scripts/gemini.js",
-  "scripts/review-pr.js",
-  "scripts/github.js",
-  ".github/workflows/ai-pr-review.yml"
-];
+    "scripts/gemini.js",
+    "scripts/review-pr.js",
+    "scripts/github.js",
+    ".github/workflows/ai-pr-review.yml"
+  ];
 
   const reviewableFiles = files.filter(
     file => !ignoredFiles.includes(file.filename)
@@ -121,11 +121,18 @@ async function main() {
     return;
   }
 
+  /*
+   * Build formatted PR comment
+   */
+
   let commentBody =
-  "<!-- AI_PR_REVIEW_COMMENT -->\n\n" +
-  "## 🤖 AI Review Summary\n\n";
+    "<!-- AI_PR_REVIEW_COMMENT -->\n\n" +
+    "## 🤖 AI Review Summary\n\n" +
+    "> AI-generated review focused on high-confidence, actionable findings.\n\n";
 
   let findingCount = 0;
+  let highCount = 0;
+  let mediumCount = 0;
 
   for (const fileResult of allFindings) {
 
@@ -146,19 +153,67 @@ async function main() {
       continue;
     }
 
+    /*
+     * File heading
+     */
+
     commentBody +=
-      `### ${fileResult.fileName}\n`;
+      `### 📄 \`${fileResult.fileName}\`\n\n`;
 
     for (const finding of filteredFindings) {
 
       findingCount++;
 
+      const severity =
+        finding.severity.toLowerCase();
+
+      if (severity === "high") {
+        highCount++;
+      }
+
+      if (severity === "medium") {
+        mediumCount++;
+      }
+
+      const severityLabel =
+        severity === "high"
+          ? "🔴 HIGH"
+          : "🟠 MEDIUM";
+
+      /*
+       * Finding heading
+       */
+
       commentBody +=
-  `- Line ${finding.line} [${finding.severity.toUpperCase()}]\n` +
-  `  ${finding.comment}\n`;
+        `#### ${severityLabel} · Line ${finding.line}\n\n`;
+
+      /*
+       * Issue description
+       */
+
+      commentBody +=
+        `**⚠️ Issue**\n\n` +
+        `${finding.comment}\n\n`;
+
+      /*
+       * Confidence
+       */
+
+      const confidence =
+        Math.round(
+          (finding.confidence || 0) * 100
+        );
+
+      commentBody +=
+        `> **Confidence:** ${confidence}%\n\n`;
+
+      /*
+       * Separator
+       */
+
+      commentBody +=
+        `---\n\n`;
     }
- 
-    commentBody += "\n";
   }
 
   if (findingCount === 0) {
@@ -170,61 +225,98 @@ async function main() {
     return;
   }
 
+  /*
+   * Add finding statistics
+   */
+
+  const summary =
+    `**Findings:** ${findingCount} ` +
+    `· 🔴 ${highCount} High ` +
+    `· 🟠 ${mediumCount} Medium\n\n`;
+
+  commentBody =
+    commentBody.replace(
+      "> AI-generated review focused on high-confidence, actionable findings.\n\n",
+      "> AI-generated review focused on high-confidence, actionable findings.\n\n" +
+      summary
+    );
+
+  /*
+   * Print generated comment
+   */
+
   console.log("\n========================");
   console.log("GENERATED COMMENT");
   console.log("========================\n");
+
   console.log(commentBody);
 
+  /*
+   * Get existing PR comments
+   */
+
   const comments =
-  await getPRComments({
-    owner,
-    repo,
-    prNumber,
-    token
-  });
+    await getPRComments({
+      owner,
+      repo,
+      prNumber,
+      token
+    });
 
-const existingComment =
-  comments.find(
-    comment =>
-      comment.body &&
-      (
-        comment.body.includes(
-          "AI_PR_REVIEW_COMMENT"
-        ) ||
-        comment.body.includes(
-          "🤖 AI Review Summary"
+  /*
+   * Find existing AI review comment
+   */
+
+  const existingComment =
+    comments.find(
+      comment =>
+        comment.body &&
+        (
+          comment.body.includes(
+            "AI_PR_REVIEW_COMMENT"
+          ) ||
+          comment.body.includes(
+            "🤖 AI Review Summary"
+          )
         )
-      )
-  );
+    );
 
-if (existingComment) {
+  /*
+   * Update existing comment
+   */
 
-  await updateComment({
-    owner,
-    repo,
-    commentId: existingComment.id,
-    token,
-    body: commentBody
-  });
+  if (existingComment) {
 
-  console.log(
-    "Updated existing AI review comment"
-  );
+    await updateComment({
+      owner,
+      repo,
+      commentId: existingComment.id,
+      token,
+      body: commentBody
+    });
 
-} else {
+    console.log(
+      "Updated existing AI review comment"
+    );
 
-  await createPRComment({
-    owner,
-    repo,
-    prNumber,
-    token,
-    body: commentBody
-  });
+  } else {
 
-  console.log(
-    "Created new AI review comment"
-  );
-}
+    /*
+     * Create new comment
+     */
+
+    await createPRComment({
+      owner,
+      repo,
+      prNumber,
+      token,
+      body: commentBody
+    });
+
+    console.log(
+      "Created new AI review comment"
+    );
+  }
 }
 
 main().catch(console.error);
