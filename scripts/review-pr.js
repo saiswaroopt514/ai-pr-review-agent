@@ -28,6 +28,137 @@ async function getFileContent(
     .toString("utf8");
 }
 
+// Detect dependency changes from package.json patch
+function getDependencyChangesFromPatch(patch) {
+  const changes = {
+    added: [],
+    updated: []
+  };
+
+  if (!patch) {
+    return changes;
+  }
+
+  const removed = [];
+  const added = [];
+
+  const lines = patch.split("\n");
+
+  for (const line of lines) {
+
+    // Ignore diff metadata
+    if (
+      line.startsWith("+++") ||
+      line.startsWith("---")
+    ) {
+      continue;
+    }
+
+    // Removed dependency
+    if (line.startsWith("-")) {
+
+      const match = line.match(
+        /^-\s*"([^"]+)"\s*:\s*"([^"]+)"/
+      );
+
+      if (match) {
+        removed.push({
+          name: match[1],
+          version: match[2]
+        });
+      }
+    }
+
+    // Added dependency
+    if (line.startsWith("+")) {
+
+      const match = line.match(
+        /^\+\s*"([^"]+)"\s*:\s*"([^"]+)"/
+      );
+
+      if (match) {
+        added.push({
+          name: match[1],
+          version: match[2]
+        });
+      }
+    }
+  }
+
+  // Match removed + added package names
+  // to identify version updates
+  for (const newDependency of added) {
+
+    const oldDependency =
+      removed.find(
+        dependency =>
+          dependency.name === newDependency.name
+      );
+
+    if (oldDependency) {
+
+      changes.updated.push({
+        name: newDependency.name,
+        from: oldDependency.version,
+        to: newDependency.version
+      });
+
+    } else {
+
+      changes.added.push({
+        name: newDependency.name,
+        version: newDependency.version
+      });
+    }
+  }
+
+  return changes;
+}
+
+// Check dependency against OSV vulnerability database
+async function checkDependencyVulnerability(
+  packageName,
+  version
+) {
+  try {
+
+    const response = await axios.post(
+      "https://api.osv.dev/v1/query",
+      {
+        package: {
+          name: packageName,
+          ecosystem: "npm"
+        },
+        version
+      },
+      {
+        headers: {
+          "Content-Type": "application/json"
+        }
+      }
+    );
+
+    return response.data.vulns || [];
+
+  } catch (error) {
+
+    console.error(
+      `Failed to check vulnerability for ${packageName}@${version}`
+    );
+
+    if (error.response) {
+
+      console.error(
+        "OSV response:",
+        error.response.status,
+        error.response.data
+      );
+    }
+
+    return [];
+  }
+}
+
 async function main() {
 
   const owner = process.env.REPO_OWNER;
@@ -47,12 +178,138 @@ async function main() {
 
   const files = response.data;
 
+  console.log(
+    "\n📁 Files returned by GitHub:"
+  );
+
+  files.forEach(file => {
+    console.log(file.filename);
+  });
+
+  // Dependency changes detected in this PR
+  let dependencyChanges = {
+    added: [],
+    updated: []
+  };
+
+  // Security vulnerability results
+  const securityFindings = [];
+
+  // Check whether package.json was changed
+  const packageJsonFile =
+    files.find(
+      file => file.filename === "package.json"
+    );
+
+  if (packageJsonFile) {
+
+    console.log(
+      "\n📦 package.json changed"
+    );
+
+    console.log(
+      packageJsonFile.patch
+    );
+
+    dependencyChanges =
+      getDependencyChangesFromPatch(
+        packageJsonFile.patch
+      );
+
+    console.log(
+      "\n📦 Dependency Changes:"
+    );
+
+    console.log(
+      JSON.stringify(
+        dependencyChanges,
+        null,
+        2
+      )
+    );
+
+    // Check newly added dependencies
+    for (
+      const dependency
+      of dependencyChanges.added
+    ) {
+
+      // Convert version ranges such as ^1.18.1
+      // to the concrete version 1.18.1
+      const version =
+        dependency.version.replace(
+          /^[\^~>=<]+/,
+          ""
+        );
+
+      console.log(
+        `\n🔐 Checking ${dependency.name}@${version}`
+      );
+
+      const vulnerabilities =
+        await checkDependencyVulnerability(
+          dependency.name,
+          version
+        );
+
+      securityFindings.push({
+        name: dependency.name,
+        version,
+        vulnerabilities
+      });
+    }
+
+    // Check updated dependencies
+    for (
+      const dependency
+      of dependencyChanges.updated
+    ) {
+
+      // Convert version ranges such as ^1.18.1
+      // to the concrete version 1.18.1
+      const version =
+        dependency.to.replace(
+          /^[\^~>=<]+/,
+          ""
+        );
+
+      console.log(
+        `\n🔐 Checking ${dependency.name}@${version}`
+      );
+
+      const vulnerabilities =
+        await checkDependencyVulnerability(
+          dependency.name,
+          version
+        );
+
+      securityFindings.push({
+        name: dependency.name,
+        from: dependency.from,
+        version,
+        vulnerabilities
+      });
+    }
+
+    console.log(
+      "\n🔐 Security Vulnerability Results:"
+    );
+
+    console.log(
+      JSON.stringify(
+        securityFindings,
+        null,
+        2
+      )
+    );
+  }
+
   const ignoredFiles = [
-  "scripts/gemini.js",
-  "scripts/review-pr.js",
-  "scripts/github.js",
-  ".github/workflows/ai-pr-review.yml"
-];
+    "scripts/gemini.js",
+    "scripts/review-pr.js",
+    "scripts/github.js",
+    ".github/workflows/ai-pr-review.yml"
+  ];
 
   const reviewableFiles = files.filter(
     file => !ignoredFiles.includes(file.filename)
@@ -112,18 +369,12 @@ async function main() {
     }
   }
 
-  if (allFindings.length === 0) {
-
-    console.log(
-      "No findings detected"
-    );
-
-    return;
-  }
-
+  /*
+   * Build AI review comment
+   */
   let commentBody =
-  "<!-- AI_PR_REVIEW_COMMENT -->\n\n" +
-  "## 🤖 AI Review Summary\n\n";
+    "<!-- AI_PR_REVIEW_COMMENT -->\n\n" +
+    "## 🤖 AI Review Summary\n\n";
 
   let findingCount = 0;
 
@@ -154,14 +405,98 @@ async function main() {
       findingCount++;
 
       commentBody +=
-  `- Line ${finding.line} [${finding.severity.toUpperCase()}]\n` +
-  `  ${finding.comment}\n`;
+        `- Line ${finding.line} [${finding.severity.toUpperCase()}]\n` +
+        `  ${finding.comment}\n`;
     }
- 
+
     commentBody += "\n";
   }
 
-  if (findingCount === 0) {
+  /*
+   * Security Vulnerability Review
+   */
+  if (securityFindings.length > 0) {
+
+    commentBody +=
+      "---\n\n" +
+      "## 🔐 Security Vulnerability Review\n\n";
+
+    for (const dependency of securityFindings) {
+
+      const vulnerabilities =
+        dependency.vulnerabilities || [];
+
+      commentBody +=
+        `### ${dependency.name}@${dependency.version}\n\n`;
+
+      if (vulnerabilities.length === 0) {
+
+        commentBody +=
+          "✅ No known vulnerabilities detected.\n\n";
+
+        continue;
+      }
+
+      commentBody +=
+        `🚨 **${vulnerabilities.length} known ` +
+        `vulnerabilit${vulnerabilities.length > 1 ? "ies" : "y"} detected.**\n\n`;
+
+      for (const vulnerability of vulnerabilities) {
+
+        const severity =
+          vulnerability.database_specific?.severity ||
+          vulnerability.severity?.[0]?.score ||
+          "Unknown";
+
+        const summary =
+          vulnerability.summary ||
+          "No vulnerability summary available.";
+
+        const fixedVersions =
+          vulnerability.database_specific
+            ?.last_affected ||
+          vulnerability.affected
+            ?.flatMap(
+              affected =>
+                affected.ranges
+                  ?.flatMap(
+                    range =>
+                      range.events
+                        ?.filter(
+                          event =>
+                            event.fixed
+                        )
+                        .map(
+                          event =>
+                            event.fixed
+                        ) || []
+                  ) || []
+            ) ||
+          [];
+
+        commentBody +=
+          `- **${vulnerability.id || "Unknown ID"}**\n` +
+          `  - Severity: **${severity}**\n` +
+          `  - ${summary}\n`;
+
+        if (fixedVersions.length > 0) {
+
+          commentBody +=
+            `  - Fixed version: **${fixedVersions[0]}**\n`;
+        }
+
+        commentBody += "\n";
+      }
+    }
+  }
+
+  /*
+   * Nothing to report
+   */
+  if (
+    findingCount === 0 &&
+    securityFindings.length === 0
+  ) {
 
     console.log(
       "No actionable findings"
@@ -173,58 +508,59 @@ async function main() {
   console.log("\n========================");
   console.log("GENERATED COMMENT");
   console.log("========================\n");
+
   console.log(commentBody);
 
   const comments =
-  await getPRComments({
-    owner,
-    repo,
-    prNumber,
-    token
-  });
+    await getPRComments({
+      owner,
+      repo,
+      prNumber,
+      token
+    });
 
-const existingComment =
-  comments.find(
-    comment =>
-      comment.body &&
-      (
-        comment.body.includes(
-          "AI_PR_REVIEW_COMMENT"
-        ) ||
-        comment.body.includes(
-          "🤖 AI Review Summary"
+  const existingComment =
+    comments.find(
+      comment =>
+        comment.body &&
+        (
+          comment.body.includes(
+            "AI_PR_REVIEW_COMMENT"
+          ) ||
+          comment.body.includes(
+            "🤖 AI Review Summary"
+          )
         )
-      )
-  );
+    );
 
-if (existingComment) {
+  if (existingComment) {
 
-  await updateComment({
-    owner,
-    repo,
-    commentId: existingComment.id,
-    token,
-    body: commentBody
-  });
+    await updateComment({
+      owner,
+      repo,
+      commentId: existingComment.id,
+      token,
+      body: commentBody
+    });
 
-  console.log(
-    "Updated existing AI review comment"
-  );
+    console.log(
+      "Updated existing AI review comment"
+    );
 
-} else {
+  } else {
 
-  await createPRComment({
-    owner,
-    repo,
-    prNumber,
-    token,
-    body: commentBody
-  });
+    await createPRComment({
+      owner,
+      repo,
+      prNumber,
+      token,
+      body: commentBody
+    });
 
-  console.log(
-    "Created new AI review comment"
-  );
-}
+    console.log(
+      "Created new AI review comment"
+    );
+  }
 }
 
 main().catch(console.error);
